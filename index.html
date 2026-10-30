@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="Build stage input lists and patch sheets in the browser: sections, spares, colour-coded drop boxes, auto-numbered channels, PNG and CSV export.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%227%22 fill=%22%231b1f27%22/%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%226%22 fill=%22%23e2483e%22/%3E%3C/svg%3E">
+<title>Patch List Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a console-style top bar, then one wide "sheet" card that is the patch list itself — edit in place, export as an image. */
+:root{
+  --bg:#eef0f3; --paper:#ffffff; --paper-alt:#f8f9fb; --band:#eceff3;
+  --ink:#16191f; --ink-2:#4a505c; --ink-3:#8b919c; --line:#e1e4e9;
+  --head:#1b1f27; --head-ink:#c9ced8; --accent:#e2483e; --focus:#3b82f6;
+  --chip-off:#e5e8ed;
+  --f-display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --f-body:"Barlow","Helvetica Neue",Arial,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f1115; --paper:#171a20; --paper-alt:#1b1f26; --band:#20242c;
+  --ink:#eef0f4; --ink-2:#b6bcc7; --ink-3:#727987; --line:#2a2f38;
+  --head:#0b0d10; --head-ink:#9aa1ad; --accent:#ef5b51; --focus:#60a5fa; --chip-off:#2a2f38; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1115; --paper:#171a20; --paper-alt:#1b1f26; --band:#20242c;
+  --ink:#eef0f4; --ink-2:#b6bcc7; --ink-3:#727987; --line:#2a2f38;
+  --head:#0b0d10; --head-ink:#9aa1ad; --accent:#ef5b51; --focus:#60a5fa; --chip-off:#2a2f38; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 40px}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+
+.wrap{max-width:1320px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+
+/* top bar */
+.topbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding-block:18px 4px}
+.brand{font-family:var(--f-display);font-weight:800;font-size:22px;letter-spacing:.08em;text-transform:uppercase;display:flex;align-items:center;gap:8px;margin-right:6px}
+.brand i{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
+.picker{display:flex;align-items:center;gap:8px;flex:1 1 260px;min-width:0}
+.picker select{flex:1;min-width:0;max-width:360px;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--paper);font-weight:600}
+.status{font-size:12.5px;color:var(--ink-3);white-space:nowrap}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:var(--paper);font-weight:600;font-size:14px;white-space:nowrap}
+.btn:hover{border-color:var(--ink-3)}
+.btn.primary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn.danger{color:var(--accent)}
+.btn.danger.armed{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn:disabled{opacity:.45;cursor:default}
+.btngroup{display:flex;flex-wrap:wrap;gap:8px}
+
+/* sheet */
+.sheet{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:22px 22px 18px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.sheet-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px}
+.titles{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 320px}
+.titles input{border:0;background:transparent;padding:2px 4px;margin-left:-4px;border-radius:6px;width:100%}
+.titles input:hover{background:var(--paper-alt)}
+#band{font-family:var(--f-display);font-weight:800;font-size:clamp(34px,5vw,52px);line-height:1;letter-spacing:.01em;text-transform:uppercase}
+#subtitle{font-family:var(--f-display);font-weight:700;font-size:18px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.counts{text-align:right;display:flex;flex-direction:column;gap:2px}
+.counts b{font-family:var(--f-display);font-weight:800;font-size:26px;letter-spacing:.04em}
+.counts span{font-size:13px;color:var(--ink-3)}
+
+.tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.tools .sp{flex:1}
+.field{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-2)}
+.field input{width:56px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);font-family:var(--f-mono);font-size:13px}
+
+/* table */
+.table-wrap{overflow-x:auto;border-radius:10px;border:1px solid var(--line)}
+table{border-collapse:collapse;width:100%;min-width:1080px;font-variant-numeric:tabular-nums}
+thead th{background:var(--head);color:var(--head-ink);font-family:var(--f-display);font-weight:700;font-size:13px;letter-spacing:.12em;text-transform:uppercase;text-align:left;padding:11px 8px;white-space:nowrap}
+thead th.c{text-align:center}
+td{padding:0;border-bottom:1px solid var(--line);height:38px;vertical-align:middle}
+tr.row:nth-child(odd) td{background:var(--paper-alt)}
+td.stripe{width:6px;background:var(--g)!important;padding:0}
+td.grip{width:26px;text-align:center;color:var(--ink-3);cursor:grab;user-select:none;font-size:14px}
+td.num{width:48px;text-align:center;font-family:var(--f-display);font-weight:700;font-size:18px}
+td.node{width:66px;text-align:center;font-family:var(--f-mono);font-size:12.5px;color:var(--ink-3)}
+td input.cell{width:100%;border:0;background:transparent;padding:8px;border-radius:5px;min-width:0}
+td input.cell:hover{background:color-mix(in srgb,var(--ink) 5%,transparent)}
+td input.cell:focus{background:var(--paper);box-shadow:inset 0 0 0 1.5px var(--focus);outline:none}
+td input.name{font-weight:700;color:var(--ink)}
+td input.cell::placeholder{color:transparent}
+tr.row:hover td input.cell::placeholder{color:var(--ink-3);opacity:.6}
+td.pos input{text-align:center;text-transform:uppercase}
+td.box{width:78px;text-align:center}
+.chip{width:56px;text-align:center;border:0;border-radius:999px;padding:4px 0;font-weight:700;font-size:13.5px;text-transform:uppercase;background:var(--chip-off);color:var(--ink-2)}
+.chip:placeholder-shown{background:transparent}
+tr.row:hover .chip:placeholder-shown{box-shadow:inset 0 0 0 1px var(--line)}
+.chip:focus{outline:2px solid var(--focus);outline-offset:1px}
+td.acts{width:86px;white-space:nowrap;text-align:right;padding-right:6px}
+.ib{width:24px;height:24px;border:0;border-radius:5px;background:transparent;color:var(--ink-3);font-size:13px;line-height:1;opacity:0}
+tr.row:hover .ib,tr.row:focus-within .ib,tr.sec:hover .ib,tr.sec:focus-within .ib{opacity:1}
+.ib:hover{background:var(--band);color:var(--ink)}
+.ib.x:hover{color:var(--accent)}
+@media (hover:none){.ib{opacity:1}}
+
+tr.spare td.num{color:var(--ink-3);font-weight:600}
+tr.spare input.name::placeholder{color:var(--ink-3)!important;opacity:.8}
+
+tr.sec td{background:var(--band);height:34px;border-bottom:1px solid var(--line)}
+tr.sec .secbar{display:flex;align-items:center;gap:8px;padding:0 6px 0 8px}
+tr.sec input.secname{border:0;background:transparent;font-family:var(--f-display);font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-size:13.5px;color:var(--ink-2);padding:5px 6px;border-radius:5px;width:220px;min-width:0}
+tr.sec input.secname:focus{background:var(--paper);outline:none;box-shadow:inset 0 0 0 1.5px var(--focus)}
+.swatch{width:18px;height:18px;padding:0;border:0;border-radius:50%;background:none;overflow:hidden;cursor:pointer}
+.swatch::-webkit-color-swatch-wrapper{padding:0}.swatch::-webkit-color-swatch{border:0;border-radius:50%}.swatch::-moz-color-swatch{border:0;border-radius:50%}
+.secmeta{font-size:12px;color:var(--ink-3);margin-right:auto}
+.minib{font-size:12.5px;font-weight:600;border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:3px 8px;color:var(--ink-2)}
+.minib:hover{border-color:var(--ink-3);color:var(--ink)}
+
+tr.drag-over td{box-shadow:inset 0 2px 0 var(--focus)}
+tr.dragging{opacity:.4}
+
+/* legend */
+.legend{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;font-size:13px;color:var(--ink-2)}
+.legend .lk{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:3px 6px 3px 4px;background:var(--paper)}
+.legend .lk input[type=text]{border:0;background:transparent;width:130px;font-size:13px;padding:2px}
+.legend .lk b{font-family:var(--f-display);font-size:15px;width:12px;text-align:center}
+.legend .title{font-family:var(--f-display);font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-size:12.5px;color:var(--ink-3)}
+
+.empty{padding:60px 20px;text-align:center;color:var(--ink-2);display:flex;flex-direction:column;align-items:center;gap:12px}
+.empty h2{font-family:var(--f-display);font-size:28px;text-transform:uppercase;letter-spacing:.04em;margin:0;color:var(--ink)}
+
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 14px;border-radius:10px;font-size:14px;display:flex;gap:12px;align-items:center;z-index:20;box-shadow:0 8px 24px rgba(0,0,0,.2)}
+.toast button{background:transparent;border:0;color:inherit;font-weight:700;text-decoration:underline}
+
+@media (max-width:640px){
+  .sheet{padding:16px 12px}
+  .counts{text-align:left}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<datalist id="dl-mic">
+  <option>Beta 91A</option><option>Beta 52</option><option>Beta 56A</option><option>Beta 57A</option><option>Beta 58A</option><option>Beta 98</option>
+  <option>SM57</option><option>SM58</option><option>SM81</option><option>KSM9</option><option>KSM32</option>
+  <option>KM184</option><option>KM185</option><option>e602</option><option>e604</option><option>e609</option><option>e614</option><option>e901</option><option>e902</option><option>e904</option><option>e906</option><option>e935</option><option>e945</option>
+  <option>MD421</option><option>MD441</option><option>D112</option><option>D6</option><option>i5</option><option>C414</option><option>C451</option><option>Royer R-121</option><option>Royer R-10</option>
+  <option>JDI</option><option>JDI Stereo</option><option>J48</option><option>J48 Stereo</option><option>Radial ProDI</option><option>Radial ProD2</option><option>BSS AR-133</option>
+  <option>AD2 w/- Beta 58A</option><option>AD2 w/- KSM9</option><option>ULXD2 w/- Beta 58A</option><option>Axient AD4D</option><option>Talkback SM58</option>
+</datalist>
+<datalist id="dl-stand"><option>Short Boom</option><option>Tall Boom</option><option>Round Base</option><option>Claw</option><option>Clip</option><option>Straight</option><option>Desk</option></datalist>
+<datalist id="dl-pos"><option>USC</option><option>USL</option><option>USR</option><option>MSL</option><option>MSC</option><option>MSR</option><option>DSL</option><option>DSC</option><option>DSR</option><option>FOH</option><option>MON</option></datalist>
+<datalist id="dl-dev"><option>Shure AD4D</option><option>Shure ULXD4Q</option><option>Shure PSM1000</option><option>Sennheiser EM 6000</option><option>Stage Box</option></datalist>
+
+<div class="wrap">
+  <header class="topbar">
+    <div class="brand"><i></i>Patch</div>
+    <div class="picker">
+      <label for="listSel" class="status" style="position:absolute;left:-9999px">Patch list</label>
+      <select id="listSel" aria-label="Open patch list"></select>
+      <span class="status" id="status">Loading…</span>
+    </div>
+    <div class="btngroup">
+      <button class="btn primary" id="newBtn">+ New list</button>
+      <button class="btn" id="dupBtn">Duplicate</button>
+      <button class="btn danger" id="delBtn">Delete</button>
+    </div>
+  </header>
+
+  <section class="sheet" id="sheet"></section>
+</div>
+<input type="file" id="impFile" accept=".json,application/json" hidden>
+<div class="toast" id="toast" hidden><span id="toastMsg"></span><button id="toastUndo" hidden>Undo</button></div>
+
+<script>
+(() => {
+"use strict";
+// ---------- helpers ----------
+const $ = s => document.querySelector(s);
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()).replace(/-/g,"").slice(0,12);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const clone = o => JSON.parse(JSON.stringify(o));
+const FIELDS = ["name","mic","stand","pos","box","device","notes"];
+const isSpare = r => FIELDS.every(f => !String(r[f]||"").trim());
+const LS_KEY = "patchlist.local.v1", LS_LAST = "patchlist.last";
+const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k,v) => { try { localStorage.setItem(k,v); } catch {} };
+
+const DEFAULT_BOXES = [
+  {k:"A", color:"#e2483e", label:"USC"},
+  {k:"B", color:"#4296de", label:"MSR"},
+  {k:"C", color:"#f5c828", label:"MSL"},
+  {k:"D", color:"#4ca060", label:""},
+];
+const SECTION_COLORS = ["#e2483e","#f5c828","#4296de","#8c64c8","#4ca060","#78828c","#e8843a","#2bb3a6"];
+
+function blankRow(p={}){ return {id:uid(), name:"",mic:"",stand:"",pos:"",box:"",device:"",notes:"", ...p}; }
+function newList(name="New Act"){
+  return { name, band:name, subtitle:"Input List", nodePrefix:"1", boxes:clone(DEFAULT_BOXES),
+    sections:[
+      {id:uid(), name:"Drums", color:SECTION_COLORS[0], rows:[blankRow({name:"Kick In",pos:"USC",box:"A1"}),blankRow({name:"Snare Top",pos:"USC",box:"A2"})]},
+      {id:uid(), name:"Vocals", color:SECTION_COLORS[3], rows:[blankRow({name:"Lead Vocal",pos:"DSC"})]},
+    ], updatedAt:Date.now() };
+}
+
+function exampleList(){
+  const R = (name,mic,stand,pos,box,device="",notes="") => blankRow({name,mic,stand,pos,box,device,notes});
+  return { name:"Example Band", band:"Example Band", subtitle:"Input List · Example", nodePrefix:"1", boxes:clone(DEFAULT_BOXES), updatedAt:Date.now(),
+    sections:[
+      {id:uid(), name:"Drums", color:SECTION_COLORS[0], rows:[R("Kick In","Beta 91A","","USC","A1"),R("Kick Out","Beta 52","Short Boom","USC","A2"),R("Snare Top","SM57","Short Boom","USC","A3"),R("Snare Bot","SM57","Claw","USC","A4"),R("Hats","KM184","Short Boom","USC","A5"),R("Rack 1","e904","","USC","A6"),R("Floor 1","e904","","USC","A7"),R("OH SR","KM184","Tall Boom","USC","A8"),R("OH SL","KM184","Tall Boom","USC","A9"),blankRow()]},
+      {id:uid(), name:"Bass & Guitar", color:SECTION_COLORS[2], rows:[R("Bass DI","J48","","MSL","C1"),R("Guitar","e906","Short Boom","MSR","B1")]},
+      {id:uid(), name:"Vocals", color:SECTION_COLORS[3], rows:[R("Lead Vocal","AD2 w/- Beta 58A","Round Base","DSC","","Shure AD4D","RX Gain -6"),R("BV SR","Beta 58A","Tall Boom","MSR","B2"),R("BV SL","Beta 58A","Tall Boom","MSL","C2")]},
+    ] };
+}
+
+// ---------- state ----------
+let db = null;             // claude db namespace or null
+let downloads = null;
+let lists = {};            // id -> doc data (from store)
+let curId = null;
+let cur = null;            // working copy of the open list
+let dirty = false, saveTimer = null, saving = false, lastSavedAt = 0;
+let undoStack = [];
+let mode = "local";        // "cloud" | "local"
+
+// ---------- storage ----------
+function localAll(){ try { return JSON.parse(lsGet(LS_KEY) || "{}") || {}; } catch { return {}; } }
+function localPut(id, data){ const all = localAll(); all[id] = data; lsSet(LS_KEY, JSON.stringify(all)); }
+function localDel(id){ const all = localAll(); delete all[id]; lsSet(LS_KEY, JSON.stringify(all)); }
+
+async function persist(id, data){
+  if (db) await db.collection("lists").doc(id).set(data);
+  else localPut(id, data);
+}
+async function removeList(id){
+  if (db) await db.collection("lists").doc(id).delete();
+  else localDel(id);
+}
+
+function setStatus(t){ $("#status").textContent = t; }
+function scheduleSave(){
+  dirty = true; setStatus("Unsaved changes");
+  clearTimeout(saveTimer); saveTimer = setTimeout(flush, 900);
+}
+async function flush(){
+  if (!cur || !dirty) return;
+  if (saving){ clearTimeout(saveTimer); saveTimer = setTimeout(flush, 400); return; }
+  saving = true; dirty = false;
+  cur.updatedAt = Date.now(); lastSavedAt = cur.updatedAt;
+  const id = curId, data = clone(cur);
+  lists[id] = data; setStatus("Saving…");
+  try { await persist(id, data); setStatus(mode === "cloud" ? "Saved" : "Saved in this browser"); renderPicker(); renderCounts(); }
+  catch(e){ dirty = true; setStatus("Couldn’t save — retrying"); clearTimeout(saveTimer); saveTimer = setTimeout(flush, 4000); }
+  finally { saving = false; }
+}
+
+// ---------- undo ----------
+function snapshot(){ undoStack.push(JSON.stringify(cur)); if (undoStack.length > 60) undoStack.shift(); }
+function undo(){
+  if (!undoStack.length) return;
+  cur = JSON.parse(undoStack.pop()); render(); scheduleSave(); toast("Undone");
+}
+let toastT;
+function toast(msg, withUndo=false){
+  $("#toastMsg").textContent = msg; $("#toastUndo").hidden = !withUndo; $("#toast").hidden = false;
+  clearTimeout(toastT); toastT = setTimeout(() => $("#toast").hidden = true, withUndo ? 6000 : 2200);
+}
+$("#toastUndo").onclick = () => { undo(); $("#toast").hidden = true; };
+document.addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z" && !(e.target.matches && e.target.matches("input"))){ e.preventDefault(); undo(); }
+});
+
+// ---------- derived ----------
+function numbered(){ // [{sec, row, n}]
+  const out = []; let n = 0;
+  cur.sections.forEach(s => s.rows.forEach(r => out.push({sec:s, row:r, n:++n})));
+  return out;
+}
+const nodeOf = n => `${cur.nodePrefix || ""}${cur.nodePrefix ? "." : ""}${String(n).padStart(2,"0")}`;
+function boxColor(v){
+  const k = String(v||"").trim().charAt(0).toUpperCase();
+  const b = cur.boxes.find(x => x.k === k); return b ? b.color : null;
+}
+function inkOn(hex){
+  const h = hex.replace("#",""); const r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
+  return (0.299*r + 0.587*g + 0.114*b) > 165 ? "#2a2000" : "#ffffff";
+}
+function styleChip(el){
+  const c = boxColor(el.value);
+  if (c && el.value.trim()){ el.style.background = c; el.style.color = inkOn(c); }
+  else { el.style.background = ""; el.style.color = ""; }
+}
+
+// ---------- render ----------
+function renderPicker(){
+  const sel = $("#listSel");
+  const ids = Object.keys(lists).sort((a,b) => (lists[b].updatedAt||0) - (lists[a].updatedAt||0));
+  sel.innerHTML = ids.length ? ids.map(id => `<option value="${id}">${esc(lists[id].name || lists[id].band || "Untitled")}</option>`).join("") : `<option value="">No lists yet</option>`;
+  if (curId) sel.value = curId;
+  sel.disabled = !ids.length;
+  $("#dupBtn").disabled = !cur; $("#delBtn").disabled = !cur;
+}
+function renderCounts(){
+  const el = $("#counts"); if (!el || !cur) return;
+  const all = numbered(); const used = all.filter(x => !isSpare(x.row)).length;
+  el.innerHTML = `<b>${used} INPUTS · ${all.length} CH</b><span>Updated ${new Date(cur.updatedAt||Date.now()).toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"})}</span>`;
+}
+
+function render(){
+  renderPicker();
+  const sheet = $("#sheet");
+  if (!cur){
+    sheet.innerHTML = `<div class="empty"><h2>No patch lists yet</h2><p>Start a list for your next show. Each one saves automatically.</p><button class="btn primary" id="emptyNew">+ New list</button></div>`;
+    $("#emptyNew").onclick = createNew; return;
+  }
+  const rows = numbered();
+  let body = "";
+  cur.sections.forEach((s, si) => {
+    const secRows = rows.filter(x => x.sec === s);
+    body += `<tbody data-sec="${s.id}">
+      <tr class="sec" data-sec="${s.id}" style="--g:${esc(s.color)}">
+        <td class="stripe"></td>
+        <td colspan="11"><div class="secbar">
+          <input type="color" class="swatch" value="${esc(s.color)}" data-act="seccolor" aria-label="Section colour" id="sc-${s.id}">
+          <input class="secname" value="${esc(s.name)}" data-act="secname" aria-label="Section name" id="sn-${s.id}">
+          <span class="secmeta">${secRows.length ? `${secRows[0].n}–${secRows[secRows.length-1].n}` : "empty"}</span>
+          <button class="minib" data-act="addrow">+ Input</button>
+          <button class="minib" data-act="addspare">+ Spare</button>
+          <button class="ib" data-act="secup" title="Move section up" aria-label="Move section up" ${si===0?"disabled":""}>▲</button>
+          <button class="ib" data-act="secdown" title="Move section down" aria-label="Move section down" ${si===cur.sections.length-1?"disabled":""}>▼</button>
+          <button class="ib x" data-act="secdel" title="Delete section" aria-label="Delete section">✕</button>
+        </div></td>
+      </tr>`;
+    secRows.forEach(({row:r, n}) => {
+      const spare = isSpare(r);
+      body += `<tr class="row${spare?" spare":""}" data-row="${r.id}" style="--g:${esc(s.color)}">
+        <td class="stripe"></td>
+        <td class="grip" draggable="true" title="Drag to move" aria-hidden="true">⋮⋮</td>
+        <td class="num">${n}</td>
+        <td class="node">${nodeOf(n)}</td>
+        <td><input class="cell name" data-f="name" id="f-${r.id}-name" value="${esc(r.name)}" placeholder="${spare?"— spare —":"Name"}" aria-label="Name, input ${n}"></td>
+        <td><input class="cell" data-f="mic" id="f-${r.id}-mic" list="dl-mic" value="${esc(r.mic)}" placeholder="Mic / source" aria-label="Mic or source, input ${n}"></td>
+        <td><input class="cell" data-f="stand" id="f-${r.id}-stand" list="dl-stand" value="${esc(r.stand)}" placeholder="Stand" aria-label="Stand, input ${n}"></td>
+        <td class="pos"><input class="cell" data-f="pos" id="f-${r.id}-pos" list="dl-pos" value="${esc(r.pos)}" placeholder="Pos" aria-label="Position, input ${n}"></td>
+        <td class="box"><input class="chip" data-f="box" id="f-${r.id}-box" value="${esc(r.box)}" placeholder=" " aria-label="Drop box, input ${n}" maxlength="5"></td>
+        <td><input class="cell" data-f="device" id="f-${r.id}-device" list="dl-dev" value="${esc(r.device)}" placeholder="Input device" aria-label="Input device, input ${n}"></td>
+        <td><input class="cell" data-f="notes" id="f-${r.id}-notes" value="${esc(r.notes)}" placeholder="Notes" aria-label="Notes, input ${n}"></td>
+        <td class="acts">
+          <button class="ib" data-act="up" title="Move up" aria-label="Move input ${n} up">▲</button><button class="ib" data-act="down" title="Move down" aria-label="Move input ${n} down">▼</button><button class="ib x" data-act="del" title="Remove" aria-label="Remove input ${n}">✕</button>
+        </td>
+      </tr>`;
+    });
+    body += `</tbody>`;
+  });
+
+  const legend = cur.boxes.map((b,i) => `<span class="lk"><input type="color" class="swatch" value="${esc(b.color)}" data-bi="${i}" data-act="boxcolor" aria-label="Drop box ${esc(b.k)} colour" id="bc-${i}"><b>${esc(b.k)}</b><input type="text" value="${esc(b.label)}" data-bi="${i}" data-act="boxlabel" placeholder="Location" aria-label="Drop box ${esc(b.k)} location" id="bl-${i}"></span>`).join("");
+
+  sheet.innerHTML = `
+    <div class="sheet-head">
+      <div class="titles">
+        <input id="band" value="${esc(cur.band)}" aria-label="Act name" placeholder="ACT NAME">
+        <input id="subtitle" value="${esc(cur.subtitle)}" aria-label="Subtitle" placeholder="Input list · Tour / date">
+      </div>
+      <div class="counts" id="counts"></div>
+    </div>
+    <div class="tools">
+      <button class="btn" id="addSec">+ Section</button>
+      <button class="btn" id="reletter" title="Renumber every drop box in channel order, so each box runs 1, 2, 3 with no gaps">Reletter boxes</button>
+      <label class="field">Node prefix <input id="nodePrefix" value="${esc(cur.nodePrefix)}" maxlength="4"></label>
+      <span class="sp"></span>
+      <button class="btn" id="undoBtn" ${undoStack.length?"":"disabled"}>Undo</button>
+      <button class="btn" id="impBtn" title="Open a patch list saved as a .json file">Import</button>
+      <button class="btn" id="jsonBtn" title="Save this list as a .json file you can import later">Save file</button>
+      <button class="btn" id="csvBtn">Export CSV</button>
+      <button class="btn primary" id="pngBtn">Export image</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <colgroup><col style="width:6px"><col style="width:26px"><col style="width:48px"><col style="width:66px"><col style="width:17%"><col style="width:17%"><col style="width:12%"><col style="width:80px"><col style="width:78px"><col style="width:13%"><col><col style="width:86px"></colgroup>
+        <thead><tr><th></th><th></th><th class="c">In</th><th class="c">Node</th><th>Name</th><th>Mic / Source</th><th>Stand</th><th class="c">Pos</th><th class="c">Box</th><th>Input device</th><th>Notes</th><th></th></tr></thead>
+        ${body}
+      </table>
+    </div>
+    <div class="legend"><span class="title">Drop boxes</span>${legend}<button class="minib" id="addBox">+ Box</button></div>`;
+  sheet.querySelectorAll(".chip").forEach(styleChip);
+  renderCounts();
+  bindSheet();
+}
+
+// ---------- mutations ----------
+function findRow(id){ for (const s of cur.sections){ const i = s.rows.findIndex(r => r.id === id); if (i > -1) return {s, i}; } return null; }
+function mutate(fn, msg){ snapshot(); fn(); render(); scheduleSave(); if (msg) toast(msg, true); }
+
+function moveRow(id, dir){
+  const flat = []; cur.sections.forEach(s => s.rows.forEach((r,i) => flat.push({s,i,r})));
+  const at = flat.findIndex(x => x.r.id === id); const to = at + dir;
+  const loc = findRow(id);
+  mutate(() => {
+    if (to < 0 || to >= flat.length){ // move across section boundary into neighbouring empty section
+      const si = cur.sections.indexOf(loc.s), ns = cur.sections[si+dir]; if (!ns) return;
+      const [r] = loc.s.rows.splice(loc.i,1); dir < 0 ? ns.rows.push(r) : ns.rows.unshift(r); return;
+    }
+    const other = flat[to];
+    if (other.s === loc.s){ const a = loc.s.rows; [a[loc.i], a[other.i]] = [a[other.i], a[loc.i]]; }
+    else { const [r] = loc.s.rows.splice(loc.i,1); dir < 0 ? other.s.rows.push(r) : other.s.rows.unshift(r); }
+  });
+  requestAnimationFrame(() => { const b = document.querySelector(`tr[data-row="${id}"] [data-act="${dir<0?"up":"down"}"]`); b && b.focus(); });
+}
+function reletter(){
+  mutate(() => {
+    const counters = {};
+    cur.sections.forEach(s => s.rows.forEach(r => {
+      const k = String(r.box||"").trim().charAt(0).toUpperCase();
+      if (!k || !/[A-Z]/.test(k)) return;
+      counters[k] = (counters[k]||0) + 1; r.box = k + counters[k];
+    }));
+  });
+  toast("Drop boxes relettered in channel order", true);
+}
+
+function bindSheet(){
+  const sheet = $("#sheet");
+  $("#band").oninput = e => { cur.band = e.target.value; cur.name = e.target.value || "Untitled"; scheduleSave(); };
+  $("#subtitle").oninput = e => { cur.subtitle = e.target.value; scheduleSave(); };
+  $("#nodePrefix").oninput = e => { cur.nodePrefix = e.target.value.trim(); sheet.querySelectorAll("tr.row").forEach((tr,i) => tr.querySelector(".node").textContent = nodeOf(i+1)); scheduleSave(); };
+  $("#addSec").onclick = () => mutate(() => cur.sections.push({id:uid(), name:"New section", color:SECTION_COLORS[cur.sections.length % SECTION_COLORS.length], rows:[blankRow()]}));
+  $("#addBox").onclick = () => mutate(() => { const used = cur.boxes.map(b => b.k); const k = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").find(c => !used.includes(c)); if (k) cur.boxes.push({k, color:SECTION_COLORS[cur.boxes.length % SECTION_COLORS.length], label:""}); });
+  $("#reletter").onclick = reletter;
+  $("#undoBtn").onclick = undo;
+  $("#csvBtn").onclick = exportCSV;
+  $("#jsonBtn").onclick = exportJSON;
+  $("#impBtn").onclick = () => $("#impFile").click();
+  $("#pngBtn").onclick = exportPNG;
+
+  // text edits: update state in place, no re-render
+  let typingSnap = null;
+  sheet.addEventListener("focusin", e => { if (e.target.matches("input")) typingSnap = JSON.stringify(cur); });
+  sheet.addEventListener("change", e => { if (typingSnap && typingSnap !== JSON.stringify(cur)){ undoStack.push(typingSnap); if (undoStack.length>60) undoStack.shift(); $("#undoBtn") && ($("#undoBtn").disabled = false); } typingSnap = JSON.stringify(cur); });
+  sheet.addEventListener("input", e => {
+    const t = e.target;
+    if (t.dataset.f){
+      const tr = t.closest("tr.row"); const loc = findRow(tr.dataset.row); if (!loc) return;
+      const r = loc.s.rows[loc.i]; r[t.dataset.f] = t.value;
+      if (t.dataset.f === "box") styleChip(t);
+      const spare = isSpare(r); tr.classList.toggle("spare", spare);
+      tr.querySelector("input.name").placeholder = spare ? "— spare —" : "Name";
+      renderCounts(); scheduleSave(); return;
+    }
+    const act = t.dataset.act;
+    if (act === "secname"){ const s = cur.sections.find(x => x.id === t.closest("tr").dataset.sec); s.name = t.value; scheduleSave(); }
+    if (act === "seccolor"){ const s = cur.sections.find(x => x.id === t.closest("tr").dataset.sec); s.color = t.value;
+      sheet.querySelectorAll(`tbody[data-sec="${s.id}"] tr`).forEach(tr => tr.style.setProperty("--g", t.value)); scheduleSave(); }
+    if (act === "boxcolor"){ cur.boxes[+t.dataset.bi].color = t.value; sheet.querySelectorAll(".chip").forEach(styleChip); scheduleSave(); }
+    if (act === "boxlabel"){ cur.boxes[+t.dataset.bi].label = t.value; scheduleSave(); }
+  });
+  // Enter moves down a column, like a spreadsheet
+  sheet.addEventListener("keydown", e => {
+    const t = e.target; if (!t.dataset || !t.dataset.f) return;
+    if (e.key === "Enter" || ((e.key === "ArrowDown" || e.key === "ArrowUp") && !t.list)){
+      const trs = [...sheet.querySelectorAll("tr.row")]; const i = trs.indexOf(t.closest("tr"));
+      const j = i + ((e.key === "ArrowUp" || (e.key === "Enter" && e.shiftKey)) ? -1 : 1);
+      const nx = trs[j] && trs[j].querySelector(`[data-f="${t.dataset.f}"]`);
+      if (nx){ e.preventDefault(); nx.focus(); nx.select(); }
+    }
+  });
+
+  sheet.addEventListener("click", e => {
+    const b = e.target.closest("button[data-act]"); if (!b) return;
+    const act = b.dataset.act; const tr = b.closest("tr");
+    if (tr.classList.contains("row")){
+      const id = tr.dataset.row;
+      if (act === "up") moveRow(id, -1);
+      if (act === "down") moveRow(id, 1);
+      if (act === "del"){ const loc = findRow(id); const nm = loc.s.rows[loc.i].name || "Spare"; mutate(() => loc.s.rows.splice(loc.i,1), `Removed ${nm}`); }
+      return;
+    }
+    const s = cur.sections.find(x => x.id === tr.dataset.sec); const si = cur.sections.indexOf(s);
+    if (act === "addrow" || act === "addspare"){
+      const r = blankRow(act === "addrow" ? {name:"New input"} : {});
+      mutate(() => s.rows.push(r));
+      if (act === "addrow") requestAnimationFrame(() => { const el = document.getElementById(`f-${r.id}-name`); el && (el.focus(), el.select()); });
+    }
+    if (act === "secup" && si > 0) mutate(() => { [cur.sections[si-1], cur.sections[si]] = [cur.sections[si], cur.sections[si-1]]; });
+    if (act === "secdown" && si < cur.sections.length-1) mutate(() => { [cur.sections[si+1], cur.sections[si]] = [cur.sections[si], cur.sections[si+1]]; });
+    if (act === "secdel") mutate(() => cur.sections.splice(si,1), `Removed section ${s.name}`);
+  });
+
+  // drag and drop rows (handle starts drag; drop before the target row, or into a section header = end of that section)
+  let dragId = null;
+  sheet.querySelectorAll("td.grip").forEach(g => {
+    g.addEventListener("dragstart", e => { dragId = g.closest("tr").dataset.row; g.closest("tr").classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", dragId); e.dataTransfer.setDragImage(g.closest("tr"), 20, 18); } catch {} });
+    g.addEventListener("dragend", () => { dragId = null; sheet.querySelectorAll(".dragging,.drag-over").forEach(x => x.classList.remove("dragging","drag-over")); });
+  });
+  sheet.querySelectorAll("tr.row, tr.sec").forEach(tr => {
+    tr.addEventListener("dragover", e => { if (!dragId) return; e.preventDefault(); sheet.querySelectorAll(".drag-over").forEach(x => x.classList.remove("drag-over")); tr.classList.add("drag-over"); });
+    tr.addEventListener("drop", e => {
+      if (!dragId) return; e.preventDefault();
+      const src = findRow(dragId); if (!src) return; const id = dragId; dragId = null;
+      mutate(() => {
+        const [r] = src.s.rows.splice(src.i,1);
+        if (tr.classList.contains("sec")){ const s = cur.sections.find(x => x.id === tr.dataset.sec); s.rows.unshift(r); }
+        else { const dst = findRow(tr.dataset.row); if (!dst){ src.s.rows.splice(src.i,0,r); return; } dst.s.rows.splice(dst.i,0,r); }
+      });
+    });
+  });
+}
+
+// ---------- list management ----------
+function openList(id){
+  if (dirty) flush();
+  curId = id; cur = lists[id] ? clone(lists[id]) : null; undoStack = [];
+  if (cur){ cur.boxes ||= clone(DEFAULT_BOXES); cur.sections ||= []; }
+  lsSet(LS_LAST, id || ""); render();
+}
+async function createNew(){
+  const id = uid(); const data = newList(); lists[id] = data; openList(id);
+  dirty = true; await flush();
+  requestAnimationFrame(() => { const b = $("#band"); b && (b.focus(), b.select()); });
+}
+$("#newBtn").onclick = createNew;
+$("#dupBtn").onclick = async () => {
+  if (!cur) return; await flush();
+  const id = uid(); const data = clone(cur); data.name = (cur.name || cur.band || "List") + " (copy)"; data.updatedAt = Date.now();
+  data.sections.forEach(s => { s.id = uid(); s.rows.forEach(r => r.id = uid()); });
+  lists[id] = data; openList(id); dirty = true; await flush(); toast("Duplicated");
+};
+let delArmed = null;
+$("#delBtn").onclick = async () => {
+  const b = $("#delBtn");
+  if (!delArmed){ b.classList.add("armed"); b.textContent = "Confirm delete"; delArmed = setTimeout(() => { b.classList.remove("armed"); b.textContent = "Delete"; delArmed = null; }, 3500); return; }
+  clearTimeout(delArmed); delArmed = null; b.classList.remove("armed"); b.textContent = "Delete";
+  const id = curId, name = cur?.name; dirty = false; clearTimeout(saveTimer);
+  delete lists[id];
+  try { await removeList(id); } catch { toast("Couldn’t delete that list. Try again."); return; }
+  const next = Object.keys(lists).sort((a,b) => (lists[b].updatedAt||0)-(lists[a].updatedAt||0))[0] || null;
+  openList(next); toast(`Deleted ${name || "list"}`);
+};
+$("#listSel").onchange = e => openList(e.target.value);
+
+// ---------- export ----------
+function csvCell(v){ v = String(v ?? ""); return /[",\n]/.test(v) ? `"${v.replace(/"/g,'""')}"` : v; }
+function fileBase(){ return ((cur.band || "Patch List") + " " + (cur.subtitle || "")).trim().replace(/[^\w\- ]+/g,"").replace(/\s+/g,"_"); }
+async function offer(filename, data){
+  if (!downloads){
+    try {
+      const blob = data instanceof Blob ? data : new Blob([data], {type: filename.endsWith(".csv") ? "text/csv" : "application/json"});
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      toast("Saved " + filename);
+    } catch { toast("Couldn’t save the file"); }
+    return;
+  }
+  try { await downloads.save({filename, data}); toast("Saved " + filename); }
+  catch(e){ if (e && e.code !== "declined") toast("Couldn’t save the file" + (e && e.message ? `: ${e.message}` : "")); }
+}
+function exportCSV(){
+  const head = ["Input","Node","Section","Name","Mic / Source","Stand","Position","Drop Box","Input Device","Notes"];
+  const lines = [head.join(",")].concat(numbered().map(({sec,row,n}) => [n,nodeOf(n),sec.name,isSpare(row)?"Spare":row.name,row.mic,row.stand,row.pos,row.box,row.device,row.notes].map(csvCell).join(",")));
+  offer(fileBase() + ".csv", lines.join("\n"));
+}
+function exportJSON(){
+  offer(fileBase() + ".json", JSON.stringify({app:"patch-list", version:1, list:cur}, null, 2));
+}
+$("#impFile").addEventListener("change", async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  try {
+    const j = JSON.parse(await f.text()); const data = j.list || j;
+    if (!data || !Array.isArray(data.sections)) throw new Error("not a patch list");
+    data.sections.forEach(s => { s.id = uid(); (s.rows ||= []).forEach(r => r.id = uid()); });
+    data.boxes ||= clone(DEFAULT_BOXES); data.name ||= data.band || "Imported list"; data.updatedAt = Date.now();
+    await flush(); const id = uid(); lists[id] = data; openList(id); dirty = true; await flush();
+    toast("Imported " + data.name);
+  } catch { toast("That file isn’t a patch list saved from here"); }
+});
+async function exportPNG(){
+  try { await document.fonts.ready; await Promise.all(["800 40px 'Barlow Condensed'","700 16px Barlow","400 16px Barlow","400 13px 'JetBrains Mono'"].map(f => document.fonts.load(f))); } catch {}
+  const S = 2, M = 48, rh = 34, gh = 28, hh = 40, top = 140;
+  const cols = [ ["IN",56,"c"],["NODE",76,"c"],["NAME",190,"l"],["MIC / SOURCE",190,"l"],["STAND",130,"l"],["POS",74,"c"],["BOX",80,"c"],["INPUT DEVICE",150,"l"],["NOTES",170,"l"] ];
+  const W = M*2 + cols.reduce((a,c) => a + c[1], 0) + 10;
+  const rows = numbered(); const nRows = rows.length;
+  const H = top + hh + nRows*rh + cur.sections.length*gh + 80;
+  const cv = document.createElement("canvas"); cv.width = W*S; cv.height = H*S;
+  const g = cv.getContext("2d"); g.scale(S,S); g.textBaseline = "middle";
+  const D = "'Barlow Condensed', 'Arial Narrow', Arial, sans-serif", B = "Barlow, Arial, sans-serif", MO = "'JetBrains Mono', Menlo, monospace";
+  const rr = (x,y,w,h,r) => { g.beginPath(); g.roundRect ? g.roundRect(x,y,w,h,r) : g.rect(x,y,w,h); };
+  g.fillStyle = "#f5f6f8"; g.fillRect(0,0,W,H);
+  g.fillStyle = "#16191f"; g.font = `800 50px ${D}`; g.textAlign = "left"; g.fillText((cur.band||"").toUpperCase(), M, 62);
+  g.fillStyle = "#8b919c"; g.font = `700 19px ${D}`; g.fillText((cur.subtitle||"").toUpperCase().split("").join(String.fromCharCode(8202)), M, 104);
+  const used = rows.filter(x => !isSpare(x.row)).length;
+  g.textAlign = "right"; g.fillStyle = "#16191f"; g.font = `800 26px ${D}`; g.fillText(`${used} INPUTS · ${nRows} CH`, W-M, 62);
+  g.fillStyle = "#8b919c"; g.font = `400 14px ${B}`; g.fillText("Updated " + new Date().toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"}), W-M, 104);
+  g.fillStyle = "#fff"; g.strokeStyle = "#e1e4e9"; g.lineWidth = 1; rr(M, top, W-2*M, H-top-52, 10); g.fill(); g.stroke();
+  const xs = [M+10]; cols.forEach(c => xs.push(xs[xs.length-1] + c[1]));
+  g.save(); rr(M, top, W-2*M, H-top-52, 10); g.clip();
+  g.fillStyle = "#1b1f27"; g.fillRect(M, top, W-2*M, hh);
+  g.font = `700 13px ${D}`; g.fillStyle = "#c9ced8";
+  cols.forEach((c,i) => { g.textAlign = c[2]==="c" ? "center" : "left"; g.fillText(c[0].split("").join(String.fromCharCode(8202)), c[2]==="c" ? (xs[i]+xs[i+1])/2 : xs[i]+10, top+hh/2); });
+  let y = top + hh;
+  cur.sections.forEach(s => {
+    g.fillStyle = "#eceff3"; g.fillRect(M, y, W-2*M, gh); g.fillStyle = s.color; g.fillRect(M, y, 6, gh);
+    g.textAlign = "left"; g.fillStyle = "#5a606c"; g.font = `700 12.5px ${D}`; g.fillText((s.name||"").toUpperCase().split("").join(String.fromCharCode(8202)), xs[0]+10, y+gh/2); y += gh;
+    rows.filter(x => x.sec === s).forEach(({row:r, n}, i) => {
+      const spare = isSpare(r);
+      if (i % 2) { g.fillStyle = "#f9fafb"; g.fillRect(M, y, W-2*M, rh); }
+      g.fillStyle = s.color; g.fillRect(M, y, 6, rh);
+      const cy = y + rh/2;
+      const vals = [String(n), nodeOf(n), spare ? "— spare —" : r.name, r.mic, r.stand, (r.pos||"").toUpperCase(), (r.box||"").toUpperCase(), r.device, r.notes];
+      vals.forEach((v,c) => {
+        if (!v) return;
+        const col = cols[c]; const x = col[2]==="c" ? (xs[c]+xs[c+1])/2 : xs[c]+10; g.textAlign = col[2]==="c" ? "center" : "left";
+        if (c === 6){ const bc = boxColor(v); if (bc){ g.fillStyle = bc; rr(x-26, cy-12, 52, 24, 12); g.fill(); g.fillStyle = inkOn(bc); } else g.fillStyle = "#4a505c"; g.font = `700 14px ${B}`; g.fillText(v, x, cy+1); return; }
+        if (spare){ g.fillStyle = "#b9bec8"; g.font = c===0 ? `700 17px ${D}` : (c===1 ? `400 12.5px ${MO}` : `400 15px ${B}`); g.fillText(v, x, cy+1); return; }
+        if (c === 0){ g.fillStyle = "#16191f"; g.font = `700 18px ${D}`; }
+        else if (c === 1){ g.fillStyle = "#9aa0aa"; g.font = `400 12.5px ${MO}`; }
+        else if (c === 2){ g.fillStyle = "#16191f"; g.font = `700 16px ${B}`; }
+        else { g.fillStyle = "#4a505c"; g.font = `400 15.5px ${B}`; }
+        let t = v; const maxW = col[1] - 16; while (g.measureText(t).width > maxW && t.length > 2) t = t.slice(0,-2) + "…";
+        g.fillText(t, x, cy+1);
+      });
+      y += rh; g.fillStyle = "#eceef1"; g.fillRect(M+6, y-1, W-2*M-6, 1);
+    });
+  });
+  g.restore();
+  // legend
+  let lx = M; const ly = H - 26; g.textAlign = "left"; g.font = `400 13.5px ${B}`;
+  cur.boxes.forEach(b => {
+    if (!rows.some(x => String(x.row.box||"").trim().toUpperCase().startsWith(b.k))) return;
+    g.fillStyle = b.color; g.beginPath(); g.arc(lx+7, ly, 7, 0, Math.PI*2); g.fill();
+    const lab = `Drop Box ${b.k}${b.label ? " · " + b.label : ""}`; g.fillStyle = "#6b717c"; g.fillText(lab, lx+20, ly+1);
+    lx += 20 + g.measureText(lab).width + 28;
+  });
+  const blob = await new Promise(res => cv.toBlob(res, "image/png"));
+  if (blob) offer(fileBase() + ".png", blob);
+}
+
+// ---------- boot ----------
+async function boot(){
+  render(); // designed empty/loading state first
+  const [dbNs, dl] = await Promise.all([
+    window.claude?.use ? window.claude.use("db").catch(() => null) : null,
+    window.claude?.use ? window.claude.use("downloads").catch(() => null) : null,
+  ]);
+  db = dbNs; downloads = dl;
+  if (!downloads){ const p = $("#pngBtn"), c = $("#csvBtn"); }
+  if (db){
+    mode = "cloud"; setStatus("Connecting…");
+    let first = true;
+    db.collection("lists").onSnapshot(qs => {
+      const next = {}; qs.docs.forEach(d => { const v = d.data(); if (v) next[d.id] = v; });
+      lists = next;
+      if (first){
+        first = false;
+        const last = lsGet(LS_LAST);
+        const id = (last && lists[last]) ? last : Object.keys(lists).sort((a,b) => (lists[b].updatedAt||0)-(lists[a].updatedAt||0))[0] || null;
+        openList(id); setStatus(id ? "Saved" : "Ready"); return;
+      }
+      // someone else changed the open list: take theirs if we have no pending edits
+      if (curId && lists[curId] && !dirty && !saving && (lists[curId].updatedAt||0) > (cur?.updatedAt||0) && lists[curId].updatedAt !== lastSavedAt){
+        const ae = document.activeElement; const keep = ae && ae.id;
+        cur = clone(lists[curId]); render(); if (keep){ const el = document.getElementById(keep); el && el.focus(); }
+        toast("Updated from another device");
+      } else if (curId && !lists[curId] && !dirty){ openList(Object.keys(lists)[0] || null); }
+      else renderPicker();
+    }, () => { setStatus("Offline — changes kept in this browser"); });
+  } else {
+    mode = "local"; lists = localAll();
+    const last = lsGet(LS_LAST);
+    const id = (last && lists[last]) ? last : Object.keys(lists)[0] || null;
+    if (!id && !lsGet(LS_LAST)){ const ex = exampleList(); const eid = uid(); lists[eid] = ex; localPut(eid, ex); openList(eid); }
+    else openList(id);
+    setStatus("Saved in this browser");
+  }
+}
+window.addEventListener("beforeunload", () => { if (dirty) flush(); });
+boot();
+})();
+</script>
+</body>
+</html>
