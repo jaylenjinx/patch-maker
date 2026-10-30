@@ -369,6 +369,7 @@ function render(){
       <button class="btn" id="impBtn" title="Open a patch list saved as a .json file">Import</button>
       <button class="btn" id="jsonBtn" title="Save this list as a .json file you can import later">Save file</button>
       <button class="btn" id="csvBtn">Export CSV</button>
+      <button class="btn" id="pdfBtn">Export PDF</button>
       <button class="btn primary" id="pngBtn">Export image</button>
     </div>
     <div class="table-wrap">
@@ -428,6 +429,7 @@ function bindSheet(){
   $("#jsonBtn").onclick = exportJSON;
   $("#impBtn").onclick = () => $("#impFile").click();
   $("#pngBtn").onclick = exportPNG;
+  $("#pdfBtn").onclick = exportPDF;
 
   // text edits: update state in place, no re-render
   let typingSnap = null;
@@ -540,7 +542,7 @@ function fileBase(){ return ((cur.band || "Patch List") + " " + (cur.subtitle ||
 async function offer(filename, data){
   if (!downloads){
     try {
-      const blob = data instanceof Blob ? data : new Blob([data], {type: filename.endsWith(".csv") ? "text/csv" : "application/json"});
+      const blob = data instanceof Blob ? data : new Blob([data], {type: filename.endsWith(".csv") ? "text/csv" : filename.endsWith(".pdf") ? "application/pdf" : "application/json"});
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename;
       document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
       toast("Saved " + filename);
@@ -570,8 +572,39 @@ $("#impFile").addEventListener("change", async e => {
   } catch { toast("That file isn’t a patch list saved from here"); }
 });
 async function exportPNG(){
+  const cv = await drawSheet(2);
+  const blob = await new Promise(res => cv.toBlob(res, "image/png"));
+  if (blob) offer(fileBase() + ".png", blob);
+}
+let jsPDFLoad = null;
+function loadJsPDF(){
+  if (window.jspdf) return Promise.resolve(window.jspdf);
+  return jsPDFLoad ||= new Promise((res, rej) => {
+    const sc = document.createElement("script");
+    sc.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    sc.onload = () => window.jspdf ? res(window.jspdf) : rej(new Error("jsPDF missing"));
+    sc.onerror = () => { jsPDFLoad = null; rej(new Error("load failed")); };
+    document.head.appendChild(sc);
+  });
+}
+async function exportPDF(){
+  const btn = $("#pdfBtn"); btn.disabled = true; btn.textContent = "Making PDF…";
+  try {
+    const [{jsPDF}, cv] = await Promise.all([loadJsPDF(), drawSheet(3, true)]);
+    const landscape = cv.width > cv.height * 1.15;
+    const doc = new jsPDF({orientation: landscape ? "landscape" : "portrait", unit: "mm", format: "a4", compress: true});
+    const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight(), m = 8;
+    const k = Math.min((pw - 2*m) / cv.width, (ph - 2*m) / cv.height);
+    const w = cv.width * k, h = cv.height * k;
+    doc.setProperties({title: `${cur.band || "Patch list"} ${cur.subtitle || ""}`.trim(), creator: "Patch Maker"});
+    doc.addImage(cv.toDataURL("image/png"), "PNG", (pw - w) / 2, m, w, h, undefined, "FAST");
+    await offer(fileBase() + ".pdf", doc.output("blob"));
+  } catch(e) { toast("Couldn’t make the PDF. Check your connection and try again."); }
+  finally { btn.disabled = false; btn.textContent = "Export PDF"; }
+}
+async function drawSheet(S, print=false){
   try { await document.fonts.ready; await Promise.all(["800 40px 'Barlow Condensed'","700 16px Barlow","400 16px Barlow","400 13px 'JetBrains Mono'"].map(f => document.fonts.load(f))); } catch {}
-  const S = 2, M = 48, rh = 34, gh = 28, hh = 40, top = 140;
+  const M = 48, rh = 34, gh = 28, hh = 40, top = 140;
   const cols = [ ["IN",56,"c"],["NODE",76,"c"],["NAME",190,"l"],["MIC / SOURCE",190,"l"],["STAND",130,"l"],["POS",74,"c"],["BOX",80,"c"],["INPUT DEVICE",150,"l"],["NOTES",170,"l"] ];
   const W = M*2 + cols.reduce((a,c) => a + c[1], 0) + 10;
   const rows = numbered(); const nRows = rows.length;
@@ -580,7 +613,7 @@ async function exportPNG(){
   const g = cv.getContext("2d"); g.scale(S,S); g.textBaseline = "middle";
   const D = "'Barlow Condensed', 'Arial Narrow', Arial, sans-serif", B = "Barlow, Arial, sans-serif", MO = "'JetBrains Mono', Menlo, monospace";
   const rr = (x,y,w,h,r) => { g.beginPath(); g.roundRect ? g.roundRect(x,y,w,h,r) : g.rect(x,y,w,h); };
-  g.fillStyle = "#f5f6f8"; g.fillRect(0,0,W,H);
+  g.fillStyle = print ? "#ffffff" : "#f5f6f8"; g.fillRect(0,0,W,H);
   g.fillStyle = "#16191f"; g.font = `800 50px ${D}`; g.textAlign = "left"; g.fillText((cur.band||"").toUpperCase(), M, 62);
   g.fillStyle = "#8b919c"; g.font = `700 19px ${D}`; g.fillText((cur.subtitle||"").toUpperCase().split("").join(String.fromCharCode(8202)), M, 104);
   const used = rows.filter(x => !isSpare(x.row)).length;
@@ -626,8 +659,7 @@ async function exportPNG(){
     const lab = `Drop Box ${b.k}${b.label ? " · " + b.label : ""}`; g.fillStyle = "#6b717c"; g.fillText(lab, lx+20, ly+1);
     lx += 20 + g.measureText(lab).width + 28;
   });
-  const blob = await new Promise(res => cv.toBlob(res, "image/png"));
-  if (blob) offer(fileBase() + ".png", blob);
+  return cv;
 }
 
 // ---------- boot ----------
