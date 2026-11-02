@@ -431,6 +431,14 @@ function bindSheet(){
   $("#pngBtn").onclick = exportPNG;
   $("#pdfBtn").onclick = exportPDF;
 
+  // The listeners below are delegated on #sheet, which outlives every render, so attach them once only.
+  if (!sheet.dataset.bound){ sheet.dataset.bound = "1"; bindSheetOnce(sheet); }
+
+  // drag and drop rows (handle starts drag; drop before the target row, or into a section header = end of that section)
+  bindDrag(sheet);
+}
+
+function bindSheetOnce(sheet){
   // text edits: update state in place, no re-render
   let typingSnap = null;
   sheet.addEventListener("focusin", e => { if (e.target.matches("input")) typingSnap = JSON.stringify(cur); });
@@ -483,9 +491,10 @@ function bindSheet(){
     if (act === "secdown" && si < cur.sections.length-1) mutate(() => { [cur.sections[si+1], cur.sections[si]] = [cur.sections[si], cur.sections[si+1]]; });
     if (act === "secdel") mutate(() => cur.sections.splice(si,1), `Removed section ${s.name}`);
   });
+}
 
-  // drag and drop rows (handle starts drag; drop before the target row, or into a section header = end of that section)
-  let dragId = null;
+let dragId = null;
+function bindDrag(sheet){
   sheet.querySelectorAll("td.grip").forEach(g => {
     g.addEventListener("dragstart", e => { dragId = g.closest("tr").dataset.row; g.closest("tr").classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", dragId); e.dataTransfer.setDragImage(g.closest("tr"), 20, 18); } catch {} });
     g.addEventListener("dragend", () => { dragId = null; sheet.querySelectorAll(".dragging,.drag-over").forEach(x => x.classList.remove("dragging","drag-over")); });
